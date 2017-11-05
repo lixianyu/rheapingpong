@@ -9,11 +9,15 @@ extern "C"
 #define USE_MODEM_LORA
 #define RHEA_CLOSE_WIFI
 
-#define RHEA_PING_PONG_SW_VERSION "0.0.B04.00"
+#define RHEA_PING_PONG_SW_VERSION "0.0.B05.00"
 
 #define LED_ON    1
 #define LED_OFF   0
+#if 1
 #define LED_BLUE     GPIO_NUM_25
+#else
+#define LED_BLUE     GPIO_NUM_2
+#endif
 
 // For Lora gpio.
 #define RHEA_LORA_MISO GPIO_NUM_34 // VDET_1

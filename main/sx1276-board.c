@@ -13,22 +13,29 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 Maintainer: Miguel Luis and Gregory Cristian
 */
 //#include "board.h"
-#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <time.h>
+#include <sys/time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "driver/gpio.h"
+#include "esp_log.h"
+
+//#include <stdint.h>
+
 #include "driver/spi_master.h"
 //#include "esp_system.h"
-#include "esp_log.h"
 #include "radio.h"
 #include "sx1276.h"
 #include "sx1276-board.h"
 #include "RheaPingPongConfig.h"
 
 static const char* TAG = "sx1276-board";
+
+//#define DIO0_INPUT_PIN_SEL  (1 << RHEA_LORA_DIO0)
 
 xQueueHandle g_rhea_gpio_evt_queue;
 spi_device_handle_t spi_handle;
@@ -77,6 +84,7 @@ Gpio_t AntSwitchHf;
 
 void SX1276IoInit( void )
 {
+    ESP_LOGI(TAG, "Enter %s", __func__);
     #if 0
     GpioInit( &SX1276.Spi.Nss, RADIO_NSS, PIN_OUTPUT, PIN_PUSH_PULL, PIN_PULL_UP, 1 );
 
@@ -116,12 +124,13 @@ static void IRAM_ATTR rhea_gpio_isr_handler(void* arg)
 
 static void rhea_Irq_task(void *pvParameters)
 {
+    ESP_LOGW(TAG, "Enter %s", __func__);
     uint32_t io_num;
     while (1)
     {
         if (xQueueReceive(g_rhea_gpio_evt_queue, &io_num, portMAX_DELAY))
         {
-            printf("io_num = %u", io_num);
+            ESP_LOGV(TAG, "io_num = %u", io_num);
             switch (io_num)
             {
                 case RHEA_LORA_DIO0:
@@ -152,6 +161,7 @@ static void rhea_Irq_task(void *pvParameters)
 
 void SX1276IoIrqInit( DioIrqHandler **irqHandlers )
 {
+    ESP_LOGI(TAG, "Enter %s", __func__);
     #if 0
     GpioSetInterrupt( &SX1276.DIO0, IRQ_RISING_EDGE, IRQ_HIGH_PRIORITY, irqHandlers[0] );
     GpioSetInterrupt( &SX1276.DIO1, IRQ_RISING_EDGE, IRQ_HIGH_PRIORITY, irqHandlers[1] );
@@ -164,24 +174,26 @@ void SX1276IoIrqInit( DioIrqHandler **irqHandlers )
     //interrupt of rising edge
     io_conf.intr_type = GPIO_PIN_INTR_POSEDGE;
     //bit mask of the pin
-    io_conf.pin_bit_mask = (uint64_t)(1 << RHEA_LORA_DIO0);
+    io_conf.pin_bit_mask = (1ULL << RHEA_LORA_DIO0);
+    //io_conf.pin_bit_mask = DIO0_INPUT_PIN_SEL;
     //set as input mode    
     io_conf.mode = GPIO_MODE_INPUT;
     //enable pull-up mode
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
     gpio_config(&io_conf);
-    io_conf.pin_bit_mask = 1 << RHEA_LORA_DIO1;
+    #if 0
+    io_conf.pin_bit_mask = 1ULL << RHEA_LORA_DIO1;
     gpio_config(&io_conf);
-    io_conf.pin_bit_mask = 1 << RHEA_LORA_DIO2;
+    io_conf.pin_bit_mask = 1ULL << RHEA_LORA_DIO2;
     gpio_config(&io_conf);
-    io_conf.pin_bit_mask = 1 << RHEA_LORA_DIO3;
+    io_conf.pin_bit_mask = 1ULL << RHEA_LORA_DIO3;
     gpio_config(&io_conf);
-    io_conf.pin_bit_mask = 1 << RHEA_LORA_DIO4;
+    io_conf.pin_bit_mask = 1ULL << RHEA_LORA_DIO4;
     gpio_config(&io_conf);
-    io_conf.pin_bit_mask = 1 << RHEA_LORA_DIO5;
+    io_conf.pin_bit_mask = 1ULL << RHEA_LORA_DIO5;
     gpio_config(&io_conf);
-
+    #endif
     //create a queue to handle gpio event from isr
     g_rhea_gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
     //start gpio task
@@ -200,6 +212,7 @@ void SX1276IoIrqInit( DioIrqHandler **irqHandlers )
 
 void SX1276IoDeInit( void )
 {
+    ESP_LOGW(TAG, "Enter %s", __func__);
     #if 0
     GpioInit( &SX1276.Spi.Nss, RADIO_NSS, PIN_OUTPUT, PIN_PUSH_PULL, PIN_NO_PULL, 1 );
 
@@ -214,6 +227,7 @@ void SX1276IoDeInit( void )
 
 void SX1276SetRfTxPower( int8_t power )
 {
+    ESP_LOGW(TAG, "Enter %s", __func__);
     uint8_t paConfig = 0;
     uint8_t paDac = 0;
 
@@ -225,16 +239,20 @@ void SX1276SetRfTxPower( int8_t power )
 
     if( ( paConfig & RF_PACONFIG_PASELECT_PABOOST ) == RF_PACONFIG_PASELECT_PABOOST )
     {
+        ESP_LOGV(TAG, "...................01");
         if( power > 17 )
         {
+            ESP_LOGV(TAG, "...................02");
             paDac = ( paDac & RF_PADAC_20DBM_MASK ) | RF_PADAC_20DBM_ON;
         }
         else
         {
+            ESP_LOGV(TAG, "...................03");
             paDac = ( paDac & RF_PADAC_20DBM_MASK ) | RF_PADAC_20DBM_OFF;
         }
         if( ( paDac & RF_PADAC_20DBM_ON ) == RF_PADAC_20DBM_ON )
         {
+            ESP_LOGV(TAG, "...................04");
             if( power < 5 )
             {
                 power = 5;
@@ -247,6 +265,7 @@ void SX1276SetRfTxPower( int8_t power )
         }
         else
         {
+            ESP_LOGV(TAG, "...................05");
             if( power < 2 )
             {
                 power = 2;
@@ -260,6 +279,7 @@ void SX1276SetRfTxPower( int8_t power )
     }
     else
     {
+        ESP_LOGV(TAG, "...................06");
         if( power < -1 )
         {
             power = -1;
@@ -272,10 +292,12 @@ void SX1276SetRfTxPower( int8_t power )
     }
     SX1276Write( REG_PACONFIG, paConfig );
     SX1276Write( REG_PADAC, paDac );
+    ESP_LOGW(TAG, "Leave %s", __func__);
 }
 
 uint8_t SX1276GetPaSelect( uint32_t channel )
 {
+    ESP_LOGW(TAG, "Enter %s, channel=%d", __func__, channel);
     if( channel < RF_MID_BAND_THRESH )
     {
         return RF_PACONFIG_PASELECT_PABOOST;
@@ -288,6 +310,7 @@ uint8_t SX1276GetPaSelect( uint32_t channel )
 
 void SX1276SetAntSwLowPower( bool status )
 {
+    //ESP_LOGW(TAG, "Enter %s", __func__);
     if( RadioIsActive != status )
     {
         RadioIsActive = status;
@@ -305,6 +328,7 @@ void SX1276SetAntSwLowPower( bool status )
 
 void SX1276AntSwInit( void )
 {
+    //ESP_LOGW(TAG, "Enter %s", __func__);
     #if 0
     GpioInit( &AntSwitchLf, RADIO_ANT_SWITCH_LF, PIN_OUTPUT, PIN_PUSH_PULL, PIN_PULL_UP, 1 );
     GpioInit( &AntSwitchHf, RADIO_ANT_SWITCH_HF, PIN_OUTPUT, PIN_PUSH_PULL, PIN_PULL_UP, 0 );
@@ -313,6 +337,7 @@ void SX1276AntSwInit( void )
 
 void SX1276AntSwDeInit( void )
 {
+    //ESP_LOGW(TAG, "Enter %s", __func__);
     #if 0
     GpioInit( &AntSwitchLf, RADIO_ANT_SWITCH_LF, PIN_OUTPUT, PIN_OPEN_DRAIN, PIN_NO_PULL, 0 );
     GpioInit( &AntSwitchHf, RADIO_ANT_SWITCH_HF, PIN_OUTPUT, PIN_OPEN_DRAIN, PIN_NO_PULL, 0 );
@@ -321,6 +346,7 @@ void SX1276AntSwDeInit( void )
 
 void SX1276SetAntSw( uint8_t opMode )
 {
+    //ESP_LOGW(TAG, "Enter %s", __func__);
     #if 0
     switch( opMode )
     {
@@ -341,6 +367,7 @@ void SX1276SetAntSw( uint8_t opMode )
 
 bool SX1276CheckRfFrequency( uint32_t frequency )
 {
+    ESP_LOGW(TAG, "Enter %s", __func__);
     // Implement check. Currently all frequencies are supported
     return true;
 }
@@ -349,6 +376,7 @@ bool SX1276CheckRfFrequency( uint32_t frequency )
 ///////////////////////////////////////////////////////////////////////////////////////////
 void BoardInitPeriph( void )
 {
+    ESP_LOGI(TAG, "Enter %s", __func__);
     gpio_pad_select_gpio(LED_BLUE);
     gpio_set_direction(LED_BLUE, GPIO_MODE_OUTPUT);
     gpio_set_level(LED_BLUE, LED_OFF);
@@ -356,6 +384,7 @@ void BoardInitPeriph( void )
 
 void BoardInitMcu( void )
 {
+    ESP_LOGI(TAG, "Enter %s", __func__);
     // SPI init.
     esp_err_t ret;
 	spi_bus_config_t buscfg;

@@ -14,12 +14,17 @@
 
 
 extern uint64_t system_get_rtc_time(void);
-static const char *TAG_RHEA = "Rhea";
+static const char *TAG_RHEA = "Rhea_main";
 
-//#define RF_FREQUENCY                                470000000 // Hz
+//#define RF_FREQUENCY                                  470500000 // Hz
 #define RF_FREQUENCY                                433000000 // Hz
+//#define RF_FREQUENCY                                433050000 // No work
+//#define RF_FREQUENCY                                433125000 // Work
+//#define RF_FREQUENCY                                433250000 // No work
+//#define RF_FREQUENCY                                432875000 // Work
+//#define RF_FREQUENCY                                433000010 // Work
 
-#define TX_OUTPUT_POWER                             14        // dBm
+#define TX_OUTPUT_POWER                             20        // dBm
 #if defined( USE_MODEM_LORA )
 
 #define LORA_BANDWIDTH                              0         // [0: 125 kHz,
@@ -298,11 +303,15 @@ static void led_Toggle_task(void *pvParameters)
             }
             else if (time == 3)
             {
-                vTaskDelay(50 / portTICK_PERIOD_MS);
+                vTaskDelay(40 / portTICK_PERIOD_MS);
                 gpio_set_level(LED_BLUE, LED_OFF);
                 vTaskDelay(50 / portTICK_PERIOD_MS);
                 gpio_set_level(LED_BLUE, LED_ON);
+                vTaskDelay(40 / portTICK_PERIOD_MS);
+                gpio_set_level(LED_BLUE, LED_OFF);
                 vTaskDelay(50 / portTICK_PERIOD_MS);
+                gpio_set_level(LED_BLUE, LED_ON);
+                vTaskDelay(40 / portTICK_PERIOD_MS);
             }
             gpio_set_level(LED_BLUE, LED_OFF);
         }        
@@ -335,7 +344,7 @@ static void OnTxDone( void )
  */
 static void OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr )
 {
-    ESP_LOGW(TAG_RHEA, "Enter %s", __func__);
+    ESP_LOGW(TAG_RHEA, "Enter %s, rssi:%d, snr=%d", __func__, rssi, snr);
     Radio.Sleep( );
     BufferSize = size;
     memcpy( Buffer, payload, BufferSize );
@@ -381,7 +390,7 @@ static void OnRxError( void )
 static void ping_pong_task(void *pvParameter)
 {
     ESP_LOGW(TAG_RHEA, "Enter %s", __func__);
-    bool isMaster = true;
+    bool isMaster = false;
     uint8_t i;
     States_t State = LOWPOWER;
     
@@ -412,7 +421,7 @@ static void ping_pong_task(void *pvParameter)
     Radio.SetRxConfig( MODEM_LORA, LORA_BANDWIDTH, LORA_SPREADING_FACTOR,
                                    LORA_CODINGRATE, 0, LORA_PREAMBLE_LENGTH,
                                    LORA_SYMBOL_TIMEOUT, LORA_FIX_LENGTH_PAYLOAD_ON,
-                                   0, true, 0, 0, LORA_IQ_INVERSION_ON, true );
+                                   0, true, 0, 0, LORA_IQ_INVERSION_ON, false );
 
 #elif defined( USE_MODEM_FSK )
 
@@ -517,6 +526,7 @@ static void ping_pong_task(void *pvParameter)
             break;
         case RX_TIMEOUT:
         case RX_ERROR:
+            //LedToggle(LED_BLUE, 3);
             if( isMaster == true )
             {
                 // Send the next PING frame
@@ -549,7 +559,14 @@ static void ping_pong_task(void *pvParameter)
 
         //TimerLowPowerHandler( );
         xQueueReceive(g_pingpang_queue, &State, portMAX_DELAY);
-        ESP_LOGD(TAG_RHEA, "State = %d", State);
+        if (isMaster)
+        {
+            ESP_LOGD(TAG_RHEA, "State = %d, I'm master", State);
+        }
+        else
+        {
+            ESP_LOGV(TAG_RHEA, "State = %d, I'm slave", State);
+        }
     }
 }
 

@@ -1224,6 +1224,7 @@ int16_t SX1276ReadRssi( RadioModems_t modem )
 
 void SX1276Reset( void )
 {
+    ESP_LOGI(TAG, "Enter %s", __func__);
     // Set RESET pin to 0
     //GpioInit( &SX1276.Reset, RADIO_RESET, PIN_OUTPUT, PIN_PUSH_PULL, PIN_NO_PULL, 0 );
     gpio_set_direction(RHEA_LORA_RESET, GPIO_MODE_OUTPUT);
@@ -1396,6 +1397,7 @@ void SX1276SetPublicNetwork( bool enable )
 
 void SX1276OnTimeoutIrq( TimerHandle_t xTimer )
 {
+    ESP_LOGW(TAG, "Enter %s, SX1276.Settings.State=%d", __func__, SX1276.Settings.State);
     switch( SX1276.Settings.State )
     {
     case RF_RX_RUNNING:
