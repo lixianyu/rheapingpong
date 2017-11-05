@@ -1,5 +1,5 @@
-Base on 'sx12xxDrivers-V2.1.0.zip' that from Semtech(http://www.semtech.com)
+Base on 'https://github.com/Lora-net/LoRaMac-node.git'.
 
-Make PingPong work on SX1278 + ESP32
+Make PingPong work on ESP32 platform with SX1278
 
 And enjoy it.

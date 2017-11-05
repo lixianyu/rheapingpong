@@ -6,13 +6,13 @@ extern "C"
 {
 #endif
 
-//#define RHEA_CLOSE_WIFI
+#define RHEA_CLOSE_WIFI
 
 #define RHEA_PING_PONG_SW_VERSION "0.0.B04.00"
 
 #define LED_ON    1
 #define LED_OFF   0
-#define BLINK_GPIO     GPIO_NUM_25
+#define LED_BLUE     GPIO_NUM_25
 
 // For Lora gpio.
 #define RHEA_LORA_MISO GPIO_NUM_34 // VDET_1

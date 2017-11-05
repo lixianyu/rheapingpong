@@ -8,8 +8,75 @@
 #include "esp_log.h"
 #include "driver/gpio.h"
 #include "RheaPingPongConfig.h"
+#include "sx1276.h"
+#include "radio.h"
 
 static const char *TAG_RHEA = "Rhea";
+
+//#define RF_FREQUENCY                                470000000 // Hz
+#define RF_FREQUENCY                                433000000 // Hz
+
+#define TX_OUTPUT_POWER                             14        // dBm
+#if defined( USE_MODEM_LORA )
+
+#define LORA_BANDWIDTH                              0         // [0: 125 kHz,
+                                                              //  1: 250 kHz,
+                                                              //  2: 500 kHz,
+                                                              //  3: Reserved]
+#define LORA_SPREADING_FACTOR                       7         // [SF7..SF12]
+#define LORA_CODINGRATE                             1         // [1: 4/5,
+                                                              //  2: 4/6,
+                                                              //  3: 4/7,
+                                                              //  4: 4/8]
+#define LORA_PREAMBLE_LENGTH                        8         // Same for Tx and Rx
+#define LORA_SYMBOL_TIMEOUT                         5         // Symbols
+#define LORA_FIX_LENGTH_PAYLOAD_ON                  false
+#define LORA_IQ_INVERSION_ON                        false
+
+#elif defined( USE_MODEM_FSK )
+
+#define FSK_FDEV                                    25000     // Hz
+#define FSK_DATARATE                                50000     // bps
+#define FSK_BANDWIDTH                               50000     // Hz
+#define FSK_AFC_BANDWIDTH                           83333     // Hz
+#define FSK_PREAMBLE_LENGTH                         5         // Same for Tx and Rx
+#define FSK_FIX_LENGTH_PAYLOAD_ON                   false
+
+#else
+    #error "Please define a modem in the compiler options."
+#endif
+
+typedef enum
+{
+    LOWPOWER,
+    RX,
+    RX_TIMEOUT,
+    RX_ERROR,
+    TX,
+    TX_TIMEOUT,
+}States_t;
+
+#define RX_TIMEOUT_VALUE                            1000 // ms
+#define BUFFER_SIZE                                 64 // Define the payload size here
+
+const uint8_t PingMsg[] = "PING";
+const uint8_t PongMsg[] = "PONG";
+
+uint16_t BufferSize = BUFFER_SIZE;
+uint8_t Buffer[BUFFER_SIZE];
+
+//States_t State = LOWPOWER;
+
+int8_t RssiValue = 0;
+int8_t SnrValue = 0;
+
+/*!
+ * Radio events function pointer
+ */
+static RadioEvents_t RadioEvents;
+
+xQueueHandle g_led_toggle_queue;
+xQueueHandle g_pingpang_queue;
 
 static void dumpBytes(const uint8_t *data, size_t count)
 {
@@ -26,6 +93,13 @@ static void dumpBytes(const uint8_t *data, size_t count)
         }
     }
     printf("\r\n");
+}
+
+void DelayMs( uint32_t ms )
+{
+    uint64_t startTick = system_get_rtc_time();
+    uint64_t us = ms * 1000;
+    while( ( system_get_rtc_time() - startTick ) < us );
 }
 
 #ifndef RHEA_CLOSE_WIFI
@@ -152,30 +226,304 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
     return ESP_OK;
 }
 #endif
-
-static void blink_task(void *pvParameter)
+static void rhea_monitor_task(void *pvParameters)
 {
-    /* Configure the IOMUX register for pad BLINK_GPIO (some pads are
-       muxed to GPIO on reset already, but some default to other
-       functions and need to be switched to GPIO. Consult the
-       Technical Reference for a list of pads and their default
-       functions.)
-    */
-    gpio_pad_select_gpio(BLINK_GPIO);
-    /* Set the GPIO as a push/pull output */
-    gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
+    ESP_LOGW(TAG_RHEA, "Enter %s", __func__);
+    vTaskDelay(10004 / portTICK_PERIOD_MS);
+    while (true)
+    {
+        uint8_t reg = 0x78;
+        SX1276Read(REG_LR_VERSION, &reg);
+        ESP_LOGD(TAG, "REG_LR_VERSION=0x%02X, freememory=%d", reg, esp_get_free_heap_size());
+        vTaskDelay(5004 / portTICK_PERIOD_MS);
+    }
+}
+
+static void led_Toggle_task(void *pvParameters)
+{
+    uint8_t led;
+    uint8_t time;
+    g_led_toggle_queue = xQueueCreate(10, sizeof(uint8_t));
     while (1)
     {
-        gpio_set_level(BLINK_GPIO, LED_ON);
-        vTaskDelay(94 / portTICK_PERIOD_MS);
-        gpio_set_level(BLINK_GPIO, LED_OFF);
-        vTaskDelay(3000 / portTICK_PERIOD_MS);
+        if (xQueueReceive(g_led_toggle_queue, &time, portMAX_DELAY))
+        {
+            ESP_LOGI(TAG_RHEA, "led_Toggle_task:%d", time);
+            gpio_set_level(LED_BLUE, LED_ON);
+            if (time == 0)
+            {
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+            }
+            else if (time == 1)
+            {
+                vTaskDelay(50 / portTICK_PERIOD_MS);
+                gpio_set_level(LED_BLUE, LED_OFF);
+                vTaskDelay(50 / portTICK_PERIOD_MS);
+                gpio_set_level(LED_BLUE, LED_ON);
+                vTaskDelay(50 / portTICK_PERIOD_MS);
+            }
+            else if (time == 2)
+            {
+                vTaskDelay(700 / portTICK_PERIOD_MS);
+            }
+            else if (time == 3)
+            {
+                vTaskDelay(50 / portTICK_PERIOD_MS);
+                gpio_set_level(LED_BLUE, LED_OFF);
+                vTaskDelay(50 / portTICK_PERIOD_MS);
+                gpio_set_level(LED_BLUE, LED_ON);
+                vTaskDelay(50 / portTICK_PERIOD_MS);
+            }
+            gpio_set_level(LED_BLUE, LED_OFF);
+        }        
+    }
+}
+
+static void LedToggle(uint8_t led, uint8_t time)
+{
+    xQueueSend(g_led_toggle_queue, &time, 0);
+}
+
+static void LedOff(uint8_t led)
+{
+    gpio_set_level(led, LED_OFF);
+}
+
+/*!
+ * \brief Function to be executed on Radio Tx Done event
+ */
+static void OnTxDone( void )
+{
+    ESP_LOGW(TAG_RHEA, "Enter %s", __func__);
+    Radio.Sleep( );
+    States_t state = TX;
+    xQueueSend(g_pingpang_queue, &state, 0);
+}
+
+/*!
+ * \brief Function to be executed on Radio Rx Done event
+ */
+static void OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr )
+{
+    ESP_LOGW(TAG_RHEA, "Enter %s", __func__);
+    Radio.Sleep( );
+    BufferSize = size;
+    memcpy( Buffer, payload, BufferSize );
+    RssiValue = rssi;
+    SnrValue = snr;
+    States_t state = RX;
+    xQueueSend(g_pingpang_queue, &state, 0);
+}
+
+/*!
+ * \brief Function executed on Radio Tx Timeout event
+ */
+static void OnTxTimeout( void )
+{
+    ESP_LOGW(TAG_RHEA, "Enter %s", __func__);
+    Radio.Sleep( );
+    States_t state = TX_TIMEOUT;
+    xQueueSend(g_pingpang_queue, &state, 0);
+}
+
+/*!
+ * \brief Function executed on Radio Rx Timeout event
+ */
+static void OnRxTimeout( void )
+{
+    ESP_LOGW(TAG_RHEA, "Enter %s", __func__);
+    Radio.Sleep( );
+    States_t state = RX_TIMEOUT;
+    xQueueSend(g_pingpang_queue, &state, 0);
+}
+
+/*!
+ * \brief Function executed on Radio Rx Error event
+ */
+static void OnRxError( void )
+{
+    ESP_LOGW(TAG_RHEA, "Enter %s", __func__);
+    Radio.Sleep( );
+    States_t state = RX_ERROR;
+    xQueueSend(g_pingpang_queue, &state, 0);
+}
+
+static void ping_pong_task(void *pvParameter)
+{
+    ESP_LOGW(TAG_RHEA, "Enter %s", __func__);
+    bool isMaster = true;
+    uint8_t i;
+    States_t State = LOWPOWER;
+    
+    vTaskDelay(1004 / portTICK_PERIOD_MS);
+
+    // Target board initialization
+    BoardInitMcu( );
+    BoardInitPeriph( );
+
+    // Radio initialization
+    RadioEvents.TxDone = OnTxDone;
+    RadioEvents.RxDone = OnRxDone;
+    RadioEvents.TxTimeout = OnTxTimeout;
+    RadioEvents.RxTimeout = OnRxTimeout;
+    RadioEvents.RxError = OnRxError;
+
+    Radio.Init( &RadioEvents );
+
+    Radio.SetChannel( RF_FREQUENCY );
+
+#if defined( USE_MODEM_LORA )
+
+    Radio.SetTxConfig( MODEM_LORA, TX_OUTPUT_POWER, 0, LORA_BANDWIDTH,
+                                   LORA_SPREADING_FACTOR, LORA_CODINGRATE,
+                                   LORA_PREAMBLE_LENGTH, LORA_FIX_LENGTH_PAYLOAD_ON,
+                                   true, 0, 0, LORA_IQ_INVERSION_ON, 3000 );
+
+    Radio.SetRxConfig( MODEM_LORA, LORA_BANDWIDTH, LORA_SPREADING_FACTOR,
+                                   LORA_CODINGRATE, 0, LORA_PREAMBLE_LENGTH,
+                                   LORA_SYMBOL_TIMEOUT, LORA_FIX_LENGTH_PAYLOAD_ON,
+                                   0, true, 0, 0, LORA_IQ_INVERSION_ON, true );
+
+#elif defined( USE_MODEM_FSK )
+
+    Radio.SetTxConfig( MODEM_FSK, TX_OUTPUT_POWER, FSK_FDEV, 0,
+                                  FSK_DATARATE, 0,
+                                  FSK_PREAMBLE_LENGTH, FSK_FIX_LENGTH_PAYLOAD_ON,
+                                  true, 0, 0, 0, 3000 );
+
+    Radio.SetRxConfig( MODEM_FSK, FSK_BANDWIDTH, FSK_DATARATE,
+                                  0, FSK_AFC_BANDWIDTH, FSK_PREAMBLE_LENGTH,
+                                  0, FSK_FIX_LENGTH_PAYLOAD_ON, 0, true,
+                                  0, 0,false, true );
+
+#else
+    #error "Please define a frequency band in the compiler options."
+#endif
+
+    Radio.Rx( RX_TIMEOUT_VALUE );
+    while( 1 )
+    {
+        switch( State )
+        {
+        case RX:
+            if( isMaster == true )
+            {
+                if( BufferSize > 0 )
+                {
+                    if( strncmp( ( const char* )Buffer, ( const char* )PongMsg, 4 ) == 0 )
+                    {
+                        // Indicates on a LED that the received frame is a PONG
+                        //GpioWrite( &Led1, GpioRead( &Led1 ) ^ 1 );
+                        LedToggle(LED_BLUE, 0);
+
+                        // Send the next PING frame
+                        Buffer[0] = 'P';
+                        Buffer[1] = 'I';
+                        Buffer[2] = 'N';
+                        Buffer[3] = 'G';
+                        // We fill the buffer with numbers for the payload
+                        for( i = 4; i < BufferSize; i++ )
+                        {
+                            Buffer[i] = i - 4;
+                        }
+                        DelayMs( 1 );
+                        Radio.Send( Buffer, BufferSize );
+                    }
+                    else if( strncmp( ( const char* )Buffer, ( const char* )PingMsg, 4 ) == 0 )
+                    { // A master already exists then become a slave
+                        isMaster = false;
+                        //GpioWrite( &Led2, 1 ); // Set LED off
+                        LedOff(LED_BLUE);
+                        Radio.Rx( RX_TIMEOUT_VALUE );
+                    }
+                    else // valid reception but neither a PING or a PONG message
+                    {    // Set device as master ans start again
+                        isMaster = true;
+                        Radio.Rx( RX_TIMEOUT_VALUE );
+                    }
+                }
+            }
+            else
+            {
+                if( BufferSize > 0 )
+                {
+                    if( strncmp( ( const char* )Buffer, ( const char* )PingMsg, 4 ) == 0 )
+                    {
+                        // Indicates on a LED that the received frame is a PING
+                        //GpioWrite( &Led1, GpioRead( &Led1 ) ^ 1 );
+                        LedToggle(2);
+
+                        // Send the reply to the PONG string
+                        Buffer[0] = 'P';
+                        Buffer[1] = 'O';
+                        Buffer[2] = 'N';
+                        Buffer[3] = 'G';
+                        // We fill the buffer with numbers for the payload
+                        for( i = 4; i < BufferSize; i++ )
+                        {
+                            Buffer[i] = i - 4;
+                        }
+                        DelayMs( 1 );
+                        Radio.Send( Buffer, BufferSize );
+                    }
+                    else // valid reception but not a PING as expected
+                    {    // Set device as master and start again
+                        isMaster = true;
+                        Radio.Rx( RX_TIMEOUT_VALUE );
+                    }
+                }
+            }
+            State = LOWPOWER;
+            break;
+        case TX:
+            // Indicates on a LED that we have sent a PING [Master]
+            // Indicates on a LED that we have sent a PONG [Slave]
+            //GpioWrite( &Led2, GpioRead( &Led2 ) ^ 1 );
+            LedToggle(1);
+            Radio.Rx( RX_TIMEOUT_VALUE );
+            State = LOWPOWER;
+            break;
+        case RX_TIMEOUT:
+        case RX_ERROR:
+            if( isMaster == true )
+            {
+                // Send the next PING frame
+                Buffer[0] = 'P';
+                Buffer[1] = 'I';
+                Buffer[2] = 'N';
+                Buffer[3] = 'G';
+                for( i = 4; i < BufferSize; i++ )
+                {
+                    Buffer[i] = i - 4;
+                }
+                DelayMs( 1 );
+                Radio.Send( Buffer, BufferSize );
+            }
+            else
+            {
+                Radio.Rx( RX_TIMEOUT_VALUE );
+            }
+            State = LOWPOWER;
+            break;
+        case TX_TIMEOUT:
+            Radio.Rx( RX_TIMEOUT_VALUE );
+            State = LOWPOWER;
+            break;
+        case LOWPOWER:
+        default:
+            // Set low power
+            break;
+        }
+
+        //TimerLowPowerHandler( );
+        xQueueReceive(g_led_toggle_queue, &State, portMAX_DELAY)
+        ESP_LOGD(TAG_RHEA, "State = %d", State);
     }
 }
 
 void app_main(void)
 {
-    ESP_LOGV(TAG_RHEA, "Enter %s", __func__);
+    ESP_LOGW(TAG_RHEA, "Enter %s, sw version: %s, freememory:%d", __func__, RHEA_PING_PONG_SW_VERSION, esp_get_free_heap_size());
     nvs_flash_init();
 #ifndef RHEA_CLOSE_WIFI
     tcpip_adapter_init();
@@ -196,14 +544,11 @@ void app_main(void)
     ESP_ERROR_CHECK( esp_wifi_start() );
     ESP_ERROR_CHECK( esp_wifi_connect() );
 #endif
-    xTaskCreate(blink_task, "blink_task", 8192, NULL, 15, NULL);
+    xTaskCreate(led_Toggle_task, "led_task", 2048, NULL, 1, NULL);
+    g_pingpang_queue = xQueueCreate(10, sizeof(States_t));
+    xTaskCreate(ping_pong_task, "ping_pong", 8192, NULL, 15, NULL);
+    xTaskCreate(rhea_monitor_task, "rhea_monitor", 2048, NULL, 2, NULL);
 
-    int counts = 0;
-    while (true)
-    {
-        ESP_LOGI(TAG_RHEA, "freememory = %d", esp_get_free_heap_size());
-        printf("count %d\r\n", counts++);
-        vTaskDelay(5004 / portTICK_PERIOD_MS);
-    }
+    ESP_LOGW(TAG_RHEA, "Leave %s", __func__);
 }
 
