@@ -14,11 +14,19 @@ Maintainer: Miguel Luis, Gregory Cristian and Wael Guibene
 */
 #include <math.h>
 #include <string.h>
-#include "board.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/timers.h"
+#include "esp_log.h"
+#include "driver/gpio.h"
+#include "driver/spi_master.h"
+//#include "board.h"
 #include "radio.h"
 #include "sx1276.h"
 #include "sx1276-board.h"
+#include "RheaPingPongConfig.h"
 
+static const char* TAG = "sx1276";
+extern spi_device_handle_t spi_handle;
 /*
  * Local types definition
  */
@@ -125,7 +133,7 @@ void SX1276OnDio5Irq( void );
 /*!
  * \brief Tx & Rx timeout timer callback
  */
-void SX1276OnTimeoutIrq( void );
+void SX1276OnTimeoutIrq( TimerHandle_t xTimer );
 
 /*
  * Private global constants
@@ -232,11 +240,11 @@ void SX1276Init( RadioEvents_t *events )
     TimerInit( &RxTimeoutSyncWord, SX1276OnTimeoutIrq );
     #else
     TxTimeoutTimer = xTimerCreate("tx", (2000 / portTICK_PERIOD_MS),
-                              pdFALSE, NULL, SX1276OnTimeoutIrq);
+                              pdFALSE, (void*)NULL, SX1276OnTimeoutIrq);
     RxTimeoutTimer = xTimerCreate("rx", (2000 / portTICK_PERIOD_MS),
-                              pdFALSE, NULL, SX1276OnTimeoutIrq);
+                              pdFALSE, (void*)NULL, SX1276OnTimeoutIrq);
     RxTimeoutSyncWord = xTimerCreate("rx_sw", (2000 / portTICK_PERIOD_MS),
-                              pdFALSE, NULL, SX1276OnTimeoutIrq);
+                              pdFALSE, (void*)NULL, SX1276OnTimeoutIrq);
     #endif
     SX1276Reset( );
 
@@ -270,7 +278,9 @@ void SX1276SetChannel( uint32_t freq )
     SX1276Write( REG_FRFMID, ( uint8_t )( ( freq >> 8 ) & 0xFF ) );
     SX1276Write( REG_FRFLSB, ( uint8_t )( freq & 0xFF ) );
 }
-
+extern void DelayMs( uint32_t ms );
+extern uint32_t TimerGetCurrentTime(void);
+extern uint32_t TimerGetElapsedTime( uint32_t eventInTime );
 bool SX1276IsChannelFree( RadioModems_t modem, uint32_t freq, int16_t rssiThresh, uint32_t maxCarrierSenseTime )
 {
     bool status = true;
@@ -288,7 +298,7 @@ bool SX1276IsChannelFree( RadioModems_t modem, uint32_t freq, int16_t rssiThresh
     carrierSenseTime = TimerGetCurrentTime( );
 
     // Perform carrier sense for maxCarrierSenseTime
-    while( TimerGetElapsedTime( carrierSenseTime ) < maxCarrierSenseTime )
+    while( TimerGetElapsedTime( carrierSenseTime ) < maxCarrierSenseTime )// Should be ms
     {
         rssi = SX1276ReadRssi( modem );
 
@@ -806,7 +816,7 @@ void SX1276Send( uint8_t *buffer, uint8_t size )
             }
             else
             {
-                memcpy1( RxTxBuffer, buffer, size );
+                memcpy( RxTxBuffer, buffer, size );
                 SX1276.Settings.FskPacketHandler.ChunkSize = 32;
             }
 
@@ -1215,13 +1225,17 @@ int16_t SX1276ReadRssi( RadioModems_t modem )
 void SX1276Reset( void )
 {
     // Set RESET pin to 0
-    GpioInit( &SX1276.Reset, RADIO_RESET, PIN_OUTPUT, PIN_PUSH_PULL, PIN_NO_PULL, 0 );
+    //GpioInit( &SX1276.Reset, RADIO_RESET, PIN_OUTPUT, PIN_PUSH_PULL, PIN_NO_PULL, 0 );
+    gpio_set_direction(RHEA_LORA_RESET, GPIO_MODE_OUTPUT);
+    gpio_set_level(RHEA_LORA_RESET, 0);
 
     // Wait 1 ms
     DelayMs( 1 );
 
     // Configure RESET as input
-    GpioInit( &SX1276.Reset, RADIO_RESET, PIN_INPUT, PIN_PUSH_PULL, PIN_NO_PULL, 1 );
+    //GpioInit( &SX1276.Reset, RADIO_RESET, PIN_INPUT, PIN_PUSH_PULL, PIN_NO_PULL, 1 );
+    gpio_set_direction(RHEA_LORA_RESET, GPIO_MODE_INPUT);
+    gpio_pullup_en(RHEA_LORA_RESET);
 
     // Wait 6 ms
     DelayMs( 6 );
@@ -1290,39 +1304,50 @@ uint8_t SX1276Read( uint8_t addr )
     return data;
 }
 
+static uint8_t tx_data_spi[128]; ///< SPI master TX buffer.
+static uint8_t rx_data_spi[128]; ///< SPI master RX buffer.
 void SX1276WriteBuffer( uint8_t addr, uint8_t *buffer, uint8_t size )
 {
-    uint8_t i;
+	//ESP_LOGE(TAG, "Enter %s", __func__);
+    esp_err_t ret;
+    struct spi_transaction_t tt;
 
-    //NSS = 0;
-    GpioWrite( &SX1276.Spi.Nss, 0 );
-
-    SpiInOut( &SX1276.Spi, addr | 0x80 );
-    for( i = 0; i < size; i++ )
+    memset(&tt, 0, sizeof(spi_transaction_t));
+    tt.length = 8 * (1 + size);                     //adr is 8 bits
+    tx_data_spi[0] = addr | 0x80;
+	memcpy(tx_data_spi + 1, buffer, size);
+    tt.tx_buffer = tx_data_spi;
+	tt.rx_buffer = rx_data_spi;
+    ret = spi_device_transmit(spi_handle, &tt);  //Transmit!
+    if (ret != ESP_OK)
     {
-        SpiInOut( &SX1276.Spi, buffer[i] );
+		ESP_LOGE(TAG, "SX1276WriteBuffer fail, ret=%d", ret);
     }
-
-    //NSS = 1;
-    GpioWrite( &SX1276.Spi.Nss, 1 );
 }
 
 void SX1276ReadBuffer( uint8_t addr, uint8_t *buffer, uint8_t size )
 {
-    uint8_t i;
+	//ESP_LOGE(TAG, "Enter %s", __func__);
+    esp_err_t ret;
+    struct spi_transaction_t tt;
 
-    //NSS = 0;
-    GpioWrite( &SX1276.Spi.Nss, 0 );
-
-    SpiInOut( &SX1276.Spi, addr & 0x7F );
-
-    for( i = 0; i < size; i++ )
+	memset(tx_data_spi, 0, sizeof(tx_data_spi));
+	//memset(rx_data_spi, 0, sizeof(rx_data_spi));
+    memset(&tt, 0, sizeof(spi_transaction_t));
+    tt.length = 8 * (1 + size);                     //adr is 8 bits
+    tt.rx_buffer = rx_data_spi;
+	tx_data_spi[0] = addr;
+	tt.tx_buffer = tx_data_spi;
+    ret = spi_device_transmit(spi_handle, &tt);  //Transmit!
+    if (ret == ESP_OK)
     {
-        buffer[i] = SpiInOut( &SX1276.Spi, 0 );
+		//ESP_LOGI(TAG, "SX1276ReadBuffer OK.");
+		memcpy(buffer, rx_data_spi + 1, size);
     }
-
-    //NSS = 1;
-    GpioWrite( &SX1276.Spi.Nss, 1 );
+	else
+	{
+		ESP_LOGE(TAG, "SX1276ReadBuffer fail.");
+	}
 }
 
 void SX1276WriteFifo( uint8_t *buffer, uint8_t size )
@@ -1746,7 +1771,7 @@ void SX1276OnDio2Irq( void )
             {
             case MODEM_FSK:
                 // Checks if DIO4 is connected. If it is not PreambleDetected is set to true.
-                if( SX1276.DIO4.port == NULL )
+                //if( SX1276.DIO4.port == NULL )
                 {
                     SX1276.Settings.FskPacketHandler.PreambleDetected = true;
                 }

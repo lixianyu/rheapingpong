@@ -6,6 +6,7 @@ extern "C"
 {
 #endif
 
+#define USE_MODEM_LORA
 #define RHEA_CLOSE_WIFI
 
 #define RHEA_PING_PONG_SW_VERSION "0.0.B04.00"

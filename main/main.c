@@ -1,16 +1,19 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
+#include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_system.h"
 #include "esp_event.h"
 #include "esp_event_loop.h"
 #include "nvs_flash.h"
-#include "esp_log.h"
 #include "driver/gpio.h"
 #include "RheaPingPongConfig.h"
-#include "sx1276.h"
 #include "radio.h"
+#include "sx1276.h"
+#include "sx1276-board.h"
 
+
+extern uint64_t system_get_rtc_time(void);
 static const char *TAG_RHEA = "Rhea";
 
 //#define RF_FREQUENCY                                470000000 // Hz
@@ -23,7 +26,7 @@ static const char *TAG_RHEA = "Rhea";
                                                               //  1: 250 kHz,
                                                               //  2: 500 kHz,
                                                               //  3: Reserved]
-#define LORA_SPREADING_FACTOR                       7         // [SF7..SF12]
+#define LORA_SPREADING_FACTOR                       12         // [SF7..SF12]
 #define LORA_CODINGRATE                             1         // [1: 4/5,
                                                               //  2: 4/6,
                                                               //  3: 4/7,
@@ -56,7 +59,7 @@ typedef enum
     TX_TIMEOUT,
 }States_t;
 
-#define RX_TIMEOUT_VALUE                            1000 // ms
+#define RX_TIMEOUT_VALUE                            2000 // ms
 #define BUFFER_SIZE                                 64 // Define the payload size here
 
 const uint8_t PingMsg[] = "PING";
@@ -93,6 +96,33 @@ static void dumpBytes(const uint8_t *data, size_t count)
         }
     }
     printf("\r\n");
+}
+
+uint32_t TimerGetCurrentTime(void)
+{
+    return system_get_rtc_time()/1000;
+}
+
+uint32_t TimerGetElapsedTime( uint32_t eventInTime )
+{
+    uint32_t elapsedTime = 0;
+
+    // Needed at boot, cannot compute with 0 or elapsed time will be equal to current time
+    if( eventInTime == 0 )
+    {
+        return 0;
+    }
+
+    elapsedTime = system_get_rtc_time() / 1000;
+
+    if( elapsedTime < eventInTime )
+    { // roll over of the counter
+        return( elapsedTime + ( 0xFFFFFFFF - eventInTime ) );
+    }
+    else
+    {
+        return( elapsedTime - eventInTime );
+    }
 }
 
 void DelayMs( uint32_t ms )
@@ -233,15 +263,15 @@ static void rhea_monitor_task(void *pvParameters)
     while (true)
     {
         uint8_t reg = 0x78;
-        SX1276Read(REG_LR_VERSION, &reg);
-        ESP_LOGD(TAG, "REG_LR_VERSION=0x%02X, freememory=%d", reg, esp_get_free_heap_size());
+        reg = SX1276Read(REG_LR_VERSION);
+        ESP_LOGD(TAG_RHEA, "REG_LR_VERSION=0x%02X, freememory=%d", reg, esp_get_free_heap_size());
         vTaskDelay(5004 / portTICK_PERIOD_MS);
     }
 }
 
 static void led_Toggle_task(void *pvParameters)
 {
-    uint8_t led;
+    //uint8_t led;
     uint8_t time;
     g_led_toggle_queue = xQueueCreate(10, sizeof(uint8_t));
     while (1)
@@ -410,6 +440,7 @@ static void ping_pong_task(void *pvParameter)
             {
                 if( BufferSize > 0 )
                 {
+                    dumpBytes(Buffer, BufferSize);
                     if( strncmp( ( const char* )Buffer, ( const char* )PongMsg, 4 ) == 0 )
                     {
                         // Indicates on a LED that the received frame is a PONG
@@ -447,11 +478,12 @@ static void ping_pong_task(void *pvParameter)
             {
                 if( BufferSize > 0 )
                 {
+                    dumpBytes(Buffer, BufferSize);
                     if( strncmp( ( const char* )Buffer, ( const char* )PingMsg, 4 ) == 0 )
                     {
                         // Indicates on a LED that the received frame is a PING
                         //GpioWrite( &Led1, GpioRead( &Led1 ) ^ 1 );
-                        LedToggle(2);
+                        LedToggle(LED_BLUE, 2);
 
                         // Send the reply to the PONG string
                         Buffer[0] = 'P';
@@ -479,7 +511,7 @@ static void ping_pong_task(void *pvParameter)
             // Indicates on a LED that we have sent a PING [Master]
             // Indicates on a LED that we have sent a PONG [Slave]
             //GpioWrite( &Led2, GpioRead( &Led2 ) ^ 1 );
-            LedToggle(1);
+            LedToggle(LED_BLUE, 1);
             Radio.Rx( RX_TIMEOUT_VALUE );
             State = LOWPOWER;
             break;
@@ -516,7 +548,7 @@ static void ping_pong_task(void *pvParameter)
         }
 
         //TimerLowPowerHandler( );
-        xQueueReceive(g_led_toggle_queue, &State, portMAX_DELAY)
+        xQueueReceive(g_pingpang_queue, &State, portMAX_DELAY);
         ESP_LOGD(TAG_RHEA, "State = %d", State);
     }
 }
