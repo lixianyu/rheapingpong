@@ -16,13 +16,57 @@
 extern uint64_t system_get_rtc_time(void);
 static const char *TAG_RHEA = "Rhea_main";
 
-//#define RF_FREQUENCY                                  470500000 // Hz
-#define RF_FREQUENCY                                433000000 // Hz
+static bool isMaster = true;
+//#define RF_FREQUENCY                                470500000 // Hz
+//#define RF_FREQUENCY                                433000000 // Hz
 //#define RF_FREQUENCY                                433050000 // No work
 //#define RF_FREQUENCY                                433125000 // Work
 //#define RF_FREQUENCY                                433250000 // No work
 //#define RF_FREQUENCY                                432875000 // Work
 //#define RF_FREQUENCY                                433000010 // Work
+uint32_t gFrequency = 433000000;
+RadioModems_t modem;        //Radio modem to be used [0: FSK, 1: LoRa]
+int8_t power = 20;          //Sets the output power [dBm]
+uint32_t fdev = 0;          //Sets the frequency deviation (FSK only)
+                     //          FSK : [Hz]
+                     //          LoRa: 0
+uint32_t bandwidth = 0;    //Sets the bandwidth (LoRa only)
+                     //          FSK : 0
+                     //          LoRa: [0: 125 kHz, 1: 250 kHz,
+                     //                 2: 500 kHz, 3: Reserved]
+uint32_t datarate = 12;     //Sets the Datarate
+                     //          FSK : 600..300000 bits/s
+                     //          LoRa: [6: 64, 7: 128, 8: 256, 9: 512,
+                     //                10: 1024, 11: 2048, 12: 4096  chips]
+uint8_t coderate = 1;     //Sets the coding rate (LoRa only)
+                    //           FSK : N/A ( set to 0 )
+                    //           LoRa: [1: 4/5, 2: 4/6, 3: 4/7, 4: 4/8]
+uint16_t preambleLen = 8;  //Sets the preamble length
+                     //          FSK : Number of bytes
+                     //          LoRa: Length in symbols (the hardware adds 4 more symbols)
+uint8_t fixLen = 0;       //Fixed length packets [0: variable, 1: fixed]
+uint8_t crcOn = 1;        //Enables disables the CRC [0: OFF, 1: ON]
+uint8_t freqHopOn = 0;    //Enables disables the intra-packet frequency hopping
+                    //           FSK : N/A ( set to 0 )
+                    //           LoRa: [0: OFF, 1: ON]
+uint8_t hopPeriod = 0;    //Number of symbols between each hop
+                     //         FSK : N/A ( set to 0 )
+                     //         LoRa: Number of symbols
+uint8_t iqInverted = 0;   //Inverts IQ signals (LoRa only)
+                    //           FSK : N/A ( set to 0 )
+                    //           LoRa: [0: not inverted, 1: inverted]
+uint32_t txTimeout = 3000;      //Transmission timeout [ms]
+/* The following value SetRxConfig will only use */
+uint32_t bandwidthAfc = 0; //Sets the AFC Bandwidth (FSK only)
+                      //         FSK : >= 2600 and <= 250000 Hz
+                      //         LoRa: N/A ( set to 0 )
+uint16_t symbTimeout = 1023;  //Sets the RxSingle timeout value, max length is 1023 (10 bit)
+                     //          FSK : timeout in number of bytes
+                     //          LoRa: timeout in symbols
+uint8_t payloadLen = 0;    //Sets payload length when fixed length is used
+
+uint8_t rxContinuous = 1;  //Sets the reception in continuous mode
+                     //           [false: single mode, true: continuous mode]
 
 #define TX_OUTPUT_POWER                             20        // dBm
 #if defined( USE_MODEM_LORA )
@@ -64,13 +108,13 @@ typedef enum
     TX_TIMEOUT,
 }States_t;
 
-#define RX_TIMEOUT_VALUE                            2000 // ms
+#define RX_TIMEOUT_VALUE                            5000 // ms
 #define BUFFER_SIZE                                 64 // Define the payload size here
 
 const uint8_t PingMsg[] = "PING";
 const uint8_t PongMsg[] = "PONG";
 
-uint16_t BufferSize = BUFFER_SIZE;
+uint16_t BufferSize = 9;
 uint8_t Buffer[BUFFER_SIZE];
 
 //States_t State = LOWPOWER;
@@ -390,7 +434,7 @@ static void OnRxError( void )
 static void ping_pong_task(void *pvParameter)
 {
     ESP_LOGW(TAG_RHEA, "Enter %s", __func__);
-    bool isMaster = false;
+    
     uint8_t i;
     States_t State = LOWPOWER;
     
@@ -409,19 +453,18 @@ static void ping_pong_task(void *pvParameter)
 
     Radio.Init( &RadioEvents );
 
-    Radio.SetChannel( RF_FREQUENCY );
-
+    Radio.SetChannel( gFrequency );
 #if defined( USE_MODEM_LORA )
 
-    Radio.SetTxConfig( MODEM_LORA, TX_OUTPUT_POWER, 0, LORA_BANDWIDTH,
-                                   LORA_SPREADING_FACTOR, LORA_CODINGRATE,
-                                   LORA_PREAMBLE_LENGTH, LORA_FIX_LENGTH_PAYLOAD_ON,
-                                   true, 0, 0, LORA_IQ_INVERSION_ON, 3000 );
+    Radio.SetTxConfig( MODEM_LORA, power, fdev, bandwidth,
+                                   datarate, coderate,
+                                   preambleLen, fixLen,
+                                   crcOn, freqHopOn, hopPeriod, iqInverted, txTimeout);
 
-    Radio.SetRxConfig( MODEM_LORA, LORA_BANDWIDTH, LORA_SPREADING_FACTOR,
-                                   LORA_CODINGRATE, 0, LORA_PREAMBLE_LENGTH,
-                                   LORA_SYMBOL_TIMEOUT, LORA_FIX_LENGTH_PAYLOAD_ON,
-                                   0, true, 0, 0, LORA_IQ_INVERSION_ON, false );
+    Radio.SetRxConfig( MODEM_LORA, bandwidth, datarate,
+                                   coderate, bandwidthAfc, preambleLen,
+                                   symbTimeout, fixLen, payloadLen,
+                                   crcOn, freqHopOn, hopPeriod, iqInverted, rxContinuous);
 
 #elif defined( USE_MODEM_FSK )
 

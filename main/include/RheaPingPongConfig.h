@@ -9,13 +9,15 @@ extern "C"
 #define USE_MODEM_LORA
 #define RHEA_CLOSE_WIFI
 
-#define RHEA_PING_PONG_SW_VERSION "0.0.B05.00"
+#define RHEA_PING_PONG_SW_VERSION "0.0.B06.00"
 
 #define LED_ON    1
 #define LED_OFF   0
-#if 1
+#if 0
+// The White board
 #define LED_BLUE     GPIO_NUM_25
 #else
+// The black board
 #define LED_BLUE     GPIO_NUM_2
 #endif
 
