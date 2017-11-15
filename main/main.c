@@ -16,7 +16,7 @@
 extern uint64_t system_get_rtc_time(void);
 static const char *TAG_RHEA = "Rhea_main";
 
-static bool isMaster = true;
+static bool isMaster = false;
 //#define RF_FREQUENCY                                470500000 // Hz
 //#define RF_FREQUENCY                                433000000 // Hz
 //#define RF_FREQUENCY                                433050000 // No work
@@ -24,7 +24,7 @@ static bool isMaster = true;
 //#define RF_FREQUENCY                                433250000 // No work
 //#define RF_FREQUENCY                                432875000 // Work
 //#define RF_FREQUENCY                                433000010 // Work
-uint32_t gFrequency = 433000000;
+uint32_t gFrequency = 470500000;
 RadioModems_t modem;        //Radio modem to be used [0: FSK, 1: LoRa]
 int8_t power = 20;          //Sets the output power [dBm]
 uint32_t fdev = 0;          //Sets the frequency deviation (FSK only)
@@ -514,7 +514,7 @@ static void ping_pong_task(void *pvParameter)
                     }
                     else if( strncmp( ( const char* )Buffer, ( const char* )PingMsg, 4 ) == 0 )
                     { // A master already exists then become a slave
-                        isMaster = false;
+                        //isMaster = false;
                         //GpioWrite( &Led2, 1 ); // Set LED off
                         LedOff(LED_BLUE);
                         Radio.Rx( RX_TIMEOUT_VALUE );

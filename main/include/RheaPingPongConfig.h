@@ -9,7 +9,7 @@ extern "C"
 #define USE_MODEM_LORA
 #define RHEA_CLOSE_WIFI
 
-#define RHEA_PING_PONG_SW_VERSION "0.0.B06.00"
+#define RHEA_PING_PONG_SW_VERSION "0.0.B15.00"
 
 #define LED_ON    1
 #define LED_OFF   0
@@ -29,13 +29,14 @@ extern "C"
 
 #define RHEA_LORA_RESET (GPIO_NUM_16)
 
-#define RHEA_LORA_DIO0 GPIO_NUM_35 // VDET_2
-#define RHEA_LORA_DIO1 GPIO_NUM_21
-#define RHEA_LORA_DIO2 GPIO_NUM_22
-#define RHEA_LORA_DIO3 GPIO_NUM_26
+#define RHEA_LORA_DIO0 GPIO_NUM_36 // VDET_2
+#define RHEA_LORA_DIO1 GPIO_NUM_39
+#define RHEA_LORA_DIO2 GPIO_NUM_37
+#define RHEA_LORA_DIO3 GPIO_NUM_38
+#if 0
 #define RHEA_LORA_DIO4 GPIO_NUM_19
 #define RHEA_LORA_DIO5 GPIO_NUM_27
-
+#endif
 
 /* Strapping Pins
  GPIO_NUM_12 (MTDI): internal pull-down

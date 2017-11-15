@@ -107,11 +107,12 @@ void SX1276IoInit( void )
     gpio_set_direction(RHEA_LORA_DIO2, GPIO_MODE_INPUT);
     gpio_pad_select_gpio(RHEA_LORA_DIO3);
     gpio_set_direction(RHEA_LORA_DIO3, GPIO_MODE_INPUT);
+#if 0
     gpio_pad_select_gpio(RHEA_LORA_DIO4);
     gpio_set_direction(RHEA_LORA_DIO4, GPIO_MODE_INPUT);
     gpio_pad_select_gpio(RHEA_LORA_DIO5);
     gpio_set_direction(RHEA_LORA_DIO5, GPIO_MODE_INPUT);
-    
+#endif
     #endif
 }
 
@@ -145,12 +146,14 @@ static void rhea_Irq_task(void *pvParameters)
                 case RHEA_LORA_DIO3:
                     DioIrq[3]();
                     break;
+#if 0
                 case RHEA_LORA_DIO4:
                     DioIrq[4]();
                     break;
                 case RHEA_LORA_DIO5:
                     DioIrq[5]();
                     break;
+#endif
                 default:
                     
                     break;
@@ -206,8 +209,10 @@ void SX1276IoIrqInit( DioIrqHandler **irqHandlers )
     gpio_isr_handler_add(RHEA_LORA_DIO1, rhea_gpio_isr_handler, (void*) RHEA_LORA_DIO1);
     gpio_isr_handler_add(RHEA_LORA_DIO2, rhea_gpio_isr_handler, (void*) RHEA_LORA_DIO2);
     gpio_isr_handler_add(RHEA_LORA_DIO3, rhea_gpio_isr_handler, (void*) RHEA_LORA_DIO3);
+#if 0
     gpio_isr_handler_add(RHEA_LORA_DIO4, rhea_gpio_isr_handler, (void*) RHEA_LORA_DIO4);
     gpio_isr_handler_add(RHEA_LORA_DIO5, rhea_gpio_isr_handler, (void*) RHEA_LORA_DIO5);
+#endif
 }
 
 void SX1276IoDeInit( void )
