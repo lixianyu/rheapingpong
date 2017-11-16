@@ -113,8 +113,9 @@ typedef enum
 
 const uint8_t PingMsg[] = "PING";
 const uint8_t PongMsg[] = "PONG";
-
-uint16_t BufferSize = 9;
+#define PAY_LOAD_LENGTH 12
+#define PING_PONG_LEN 4
+uint16_t BufferSize = PAY_LOAD_LENGTH;
 uint8_t Buffer[BUFFER_SIZE];
 
 //States_t State = LOWPOWER;
@@ -266,6 +267,15 @@ static void rhea_wifi_event_str(system_event_id_t evt_id)
     ESP_LOGW(TAG_RHEA, "event_id = %s", buf);
 }
 
+static void rhea_wifi_connect_task(void *pvParameters)
+{
+    ESP_LOGW(TAG_RHEA, "Enter %s", __func__);
+    vTaskDelay(10000 / portTICK_PERIOD_MS);
+    esp_wifi_connect();
+    ESP_LOGW(TAG_RHEA, "Leave %s", __func__);
+    vTaskDelete(NULL);
+}
+
 static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
 {
     ESP_LOGW(TAG_RHEA, "Enter %s(), event_id=%d", __func__, event->event_id);
@@ -285,7 +295,7 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
         dumpBytes(event->event_info.connected.bssid, 6);
         break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
-        esp_wifi_connect();
+        xTaskCreate(rhea_wifi_connect_task, "wifi_connect", 4096, NULL, 8, NULL);
         break;
     case SYSTEM_EVENT_AP_START:
         break;
@@ -305,16 +315,98 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
     return ESP_OK;
 }
 #endif
+
+/*!
+ * Reads the raw temperature
+ * \retval temperature New raw temperature reading in 2's complement format
+ */
+int8_t RadioGetRawTemp(void)
+{
+    uint64_t be = system_get_rtc_time();
+    ESP_LOGW(TAG_RHEA, "Enter %s", __func__);
+    int8_t temp = 0;
+    uint8_t preOpMode;
+
+    // Save current Operation Mode
+    preOpMode = SX1276Read(REG_OPMODE);
+
+    // Pass through LoRa sleep only necessary if reading temperature while in Lora Mode
+    if ((preOpMode & RFLR_OPMODE_LONGRANGEMODE_ON) == RFLR_OPMODE_LONGRANGEMODE_ON)
+    {
+        SX1276Write(REG_OPMODE, RFLR_OPMODE_SLEEP);
+    }
+
+    // Put device in FSK Sleep Mode
+    SX1276Write(REG_OPMODE, RF_OPMODE_SLEEP);
+    // Put device in FSK RxSynth
+    SX1276Write(REG_OPMODE, RF_OPMODE_SYNTHESIZER_RX);
+    // Enable Temperature reading
+    uint8_t reg = SX1276Read(REG_IMAGECAL);
+    reg = (reg & RF_IMAGECAL_TEMPMONITOR_MASK) | RF_IMAGECAL_TEMPMONITOR_ON;
+    SX1276Write(REG_IMAGECAL, reg);
+
+    // Wait 150us
+    uint64_t st = system_get_rtc_time();
+    while( ( system_get_rtc_time() - st) < 150 );
+
+    // Disable Temperature reading
+    reg = SX1276Read(REG_IMAGECAL);
+    reg = (reg & RF_IMAGECAL_TEMPMONITOR_MASK) | RF_IMAGECAL_TEMPMONITOR_OFF;
+    SX1276Write(REG_IMAGECAL, reg);
+
+    // Put device in FSK Sleep Mode
+    SX1276Write(REG_OPMODE, RF_OPMODE_SLEEP);
+
+    // Read temperature
+    reg = SX1276Read(REG_TEMP);
+    if ((reg & 0x80) == 0x80)
+    {
+        temp = 255 - reg;
+    }
+    else
+    {
+        temp = reg;
+        temp *= -1;
+    }
+
+    // We were in LoRa Mode prior to the temperature reading
+    if ((preOpMode & RFLR_OPMODE_LONGRANGEMODE_ON) == RFLR_OPMODE_LONGRANGEMODE_ON)
+    {
+        SX1276Write(REG_OPMODE, RFLR_OPMODE_SLEEP);
+    }
+
+    // Reload previous Mode
+    SX1276Write(REG_OPMODE, preOpMode);
+    uint64_t en = system_get_rtc_time() - be;
+    ESP_LOGI(TAG_RHEA, "Leave %s, elapsed time:%llu(us)", __func__, en);
+    return temp;
+}
+
+int8_t RadioGetTemp(int8_t compensationFactor)
+{
+    return RadioGetRawTemp() + compensationFactor;
+}
+
 static void rhea_monitor_task(void *pvParameters)
 {
     ESP_LOGW(TAG_RHEA, "Enter %s", __func__);
     vTaskDelay(10004 / portTICK_PERIOD_MS);
+    int8_t cFactor = 0;
+    int8_t temp = 0;
     while (true)
     {
-        uint8_t reg = 0x78;
-        reg = SX1276Read(REG_LR_VERSION);
-        ESP_LOGD(TAG_RHEA, "REG_LR_VERSION=0x%02X, freememory=%d", reg, esp_get_free_heap_size());
-        vTaskDelay(5004 / portTICK_PERIOD_MS);
+        //uint8_t reg = 0x78;
+        //reg = SX1276Read(REG_LR_VERSION);
+        //uint8_t reg1 = 0x79;
+        //reg1 = SX1276Read(REG_DIOMAPPING1);
+        //uint8_t reg2 = 0x7A;
+        //reg2 = SX1276Read(REG_OPMODE);
+        //ESP_LOGD(TAG_RHEA, "REG_LR_VERSION=0x%02X, freememory=%d", reg, esp_get_free_heap_size());
+        ESP_LOGE(TAG_RHEA, "freememory=%d", esp_get_free_heap_size());
+        //ESP_LOGE(TAG_RHEA, "REG_DIOMAPPING1 = 0x%02X, REG_OPMODE=0x%02X, freememory = %u", reg1, reg2, esp_get_free_heap_size());
+        //temp = RadioGetTemp(cFactor);
+        //ESP_LOGE(TAG_RHEA, "SX1278 temperature: %d", temp);
+        vTaskDelay(10004 / portTICK_PERIOD_MS);
     }
 }
 
@@ -372,6 +464,72 @@ static void LedOff(uint8_t led)
     gpio_set_level(led, LED_OFF);
 }
 
+static inline void rhea_gen_ping_package(void)
+{
+    uint32_t rdm;
+    uint64_t val;
+    Buffer[0] = 'P';
+    Buffer[1] = 'I';
+    Buffer[2] = 'N';
+    Buffer[3] = 'G';
+    #if 0
+    // We fill the buffer with numbers for the payload
+    for( i = PING_PONG_LEN; i < PAY_LOAD_LENGTH; i++ )
+    {
+        Buffer[i] = i - PING_PONG_LEN;
+    }
+    #elif 0
+    //rdm = esp_random();
+    rdm = system_get_time();
+    Buffer[4] = rdm >> 24;
+    Buffer[5] = (rdm >> 16);// & 0xFF;
+    Buffer[6] = (rdm >> 8);// & 0xFF;
+    Buffer[7] = rdm;// & 0xFF;
+    #else
+    val = system_get_rtc_time();
+    Buffer[4] = val >> 56;
+    Buffer[5] = val >> 48;
+    Buffer[6] = val >> 40;
+    Buffer[7] = val >> 32;
+    Buffer[8] = val >> 24;
+    Buffer[9] = val >> 16;
+    Buffer[10] = val >> 8;
+    Buffer[11] = val;
+    #endif
+}
+
+static inline void rhea_gen_pong_package(void)
+{
+    Buffer[0] = 'P';
+    Buffer[1] = 'O';
+    Buffer[2] = 'N';
+    Buffer[3] = 'G';
+    #if 0
+    // We fill the buffer with numbers for the payload
+    for( i = PING_PONG_LEN; i < PAY_LOAD_LENGTH; i++ )
+    {
+        Buffer[i] = i - PING_PONG_LEN;
+    }
+    #elif 0
+    uint32_t rdm = esp_random();
+    rdm = system_get_time();
+    Buffer[4] = rdm >> 24;
+    Buffer[5] = (rdm >> 16);// & 0xFF;
+    Buffer[6] = (rdm >> 8);// & 0xFF;
+    Buffer[7] = rdm;// & 0xFF;
+    #else
+    uint64_t val = system_get_rtc_time();
+    Buffer[4] = val >> 56;
+    Buffer[5] = val >> 48;
+    Buffer[6] = val >> 40;
+    Buffer[7] = val >> 32;
+    Buffer[8] = val >> 24;
+    Buffer[9] = val >> 16;
+    Buffer[10] = val >> 8;
+    Buffer[11] = val;
+    #endif
+}
+
 /*!
  * \brief Function to be executed on Radio Tx Done event
  */
@@ -388,7 +546,7 @@ static void OnTxDone( void )
  */
 static void OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr )
 {
-    ESP_LOGW(TAG_RHEA, "Enter %s, rssi:%d, snr=%d", __func__, rssi, snr);
+    ESP_LOGW(TAG_RHEA, "Enter %s, rssi:%d, snr=%d, size=%d", __func__, rssi, snr, size);
     Radio.Sleep( );
     BufferSize = size;
     memcpy( Buffer, payload, BufferSize );
@@ -431,10 +589,25 @@ static void OnRxError( void )
     xQueueSend(g_pingpang_queue, &state, 0);
 }
 
+static void timeout_reinit(void)
+{
+    Radio.SetChannel( gFrequency );
+    Radio.SetTxConfig( MODEM_LORA, power, fdev, bandwidth,
+                                   datarate, coderate,
+                                   preambleLen, fixLen,
+                                   crcOn, freqHopOn, hopPeriod, iqInverted, txTimeout);
+
+    Radio.SetRxConfig( MODEM_LORA, bandwidth, datarate,
+                                   coderate, bandwidthAfc, preambleLen,
+                                   symbTimeout, fixLen, payloadLen,
+                                   crcOn, freqHopOn, hopPeriod, iqInverted, rxContinuous);
+}
+
 static void ping_pong_task(void *pvParameter)
 {
     ESP_LOGW(TAG_RHEA, "Enter %s", __func__);
-    
+
+    uint32_t rdm;
     uint8_t i;
     States_t State = LOWPOWER;
     
@@ -493,24 +666,16 @@ static void ping_pong_task(void *pvParameter)
                 if( BufferSize > 0 )
                 {
                     dumpBytes(Buffer, BufferSize);
-                    if( strncmp( ( const char* )Buffer, ( const char* )PongMsg, 4 ) == 0 )
+                    if( strncmp( ( const char* )Buffer, ( const char* )PongMsg, PING_PONG_LEN ) == 0 )
                     {
                         // Indicates on a LED that the received frame is a PONG
                         //GpioWrite( &Led1, GpioRead( &Led1 ) ^ 1 );
                         LedToggle(LED_BLUE, 0);
 
                         // Send the next PING frame
-                        Buffer[0] = 'P';
-                        Buffer[1] = 'I';
-                        Buffer[2] = 'N';
-                        Buffer[3] = 'G';
-                        // We fill the buffer with numbers for the payload
-                        for( i = 4; i < BufferSize; i++ )
-                        {
-                            Buffer[i] = i - 4;
-                        }
+                        rhea_gen_ping_package();
                         DelayMs( 1 );
-                        Radio.Send( Buffer, BufferSize );
+                        Radio.Send( Buffer, PAY_LOAD_LENGTH );
                     }
                     else if( strncmp( ( const char* )Buffer, ( const char* )PingMsg, 4 ) == 0 )
                     { // A master already exists then become a slave
@@ -525,36 +690,38 @@ static void ping_pong_task(void *pvParameter)
                         Radio.Rx( RX_TIMEOUT_VALUE );
                     }
                 }
+                else
+                {
+                    DelayMs( 100 );
+                    Radio.Rx( RX_TIMEOUT_VALUE );
+                }
             }
             else
             {
                 if( BufferSize > 0 )
                 {
                     dumpBytes(Buffer, BufferSize);
-                    if( strncmp( ( const char* )Buffer, ( const char* )PingMsg, 4 ) == 0 )
+                    if( strncmp( ( const char* )Buffer, ( const char* )PingMsg, PING_PONG_LEN ) == 0 )
                     {
                         // Indicates on a LED that the received frame is a PING
                         //GpioWrite( &Led1, GpioRead( &Led1 ) ^ 1 );
                         LedToggle(LED_BLUE, 2);
 
                         // Send the reply to the PONG string
-                        Buffer[0] = 'P';
-                        Buffer[1] = 'O';
-                        Buffer[2] = 'N';
-                        Buffer[3] = 'G';
-                        // We fill the buffer with numbers for the payload
-                        for( i = 4; i < BufferSize; i++ )
-                        {
-                            Buffer[i] = i - 4;
-                        }
+                        rhea_gen_pong_package();
                         DelayMs( 1 );
-                        Radio.Send( Buffer, BufferSize );
+                        Radio.Send( Buffer, PAY_LOAD_LENGTH );
                     }
                     else // valid reception but not a PING as expected
                     {    // Set device as master and start again
-                        isMaster = true;
+                        //isMaster = true;
                         Radio.Rx( RX_TIMEOUT_VALUE );
                     }
+                }
+                else
+                {
+                    DelayMs( 100 );
+                    Radio.Rx( RX_TIMEOUT_VALUE );
                 }
             }
             State = LOWPOWER;
@@ -573,16 +740,9 @@ static void ping_pong_task(void *pvParameter)
             if( isMaster == true )
             {
                 // Send the next PING frame
-                Buffer[0] = 'P';
-                Buffer[1] = 'I';
-                Buffer[2] = 'N';
-                Buffer[3] = 'G';
-                for( i = 4; i < BufferSize; i++ )
-                {
-                    Buffer[i] = i - 4;
-                }
+                rhea_gen_ping_package();
                 DelayMs( 1 );
-                Radio.Send( Buffer, BufferSize );
+                Radio.Send( Buffer, PAY_LOAD_LENGTH );
             }
             else
             {
@@ -591,6 +751,7 @@ static void ping_pong_task(void *pvParameter)
             State = LOWPOWER;
             break;
         case TX_TIMEOUT:
+            timeout_reinit();
             Radio.Rx( RX_TIMEOUT_VALUE );
             State = LOWPOWER;
             break;
@@ -601,7 +762,7 @@ static void ping_pong_task(void *pvParameter)
         }
 
         //TimerLowPowerHandler( );
-        xQueueReceive(g_pingpang_queue, &State, portMAX_DELAY);
+        xQueueReceive(g_pingpang_queue, &State, 3004 / portTICK_PERIOD_MS);
         if (isMaster)
         {
             ESP_LOGD(TAG_RHEA, "State = %d, I'm master", State);
@@ -627,8 +788,8 @@ void app_main(void)
     wifi_config_t sta_config =
     {
         .sta = {
-            .ssid = "TYG",
-            .password = "ooo1230",
+            .ssid = "TaiYangGong2",
+            .password = "6Te99978",
             .bssid_set = false
         }
     };

@@ -39,6 +39,7 @@ static const char* TAG = "sx1276-board";
 
 xQueueHandle g_rhea_gpio_evt_queue;
 spi_device_handle_t spi_handle;
+static uint8_t g_shake_state = 0;
 /*!
  * Flag used to set the RF switch control pins in low power mode when the radio is not active.
  */
@@ -98,15 +99,23 @@ void SX1276IoInit( void )
     gpio_pad_select_gpio(RHEA_LORA_RESET);
     //gpio_set_direction(RHEA_LORA_RESET, GPIO_MODE_OUTPUT);
     //gpio_set_level(RHEA_LORA_RESET, 1);
-    
+    #if 0
     gpio_pad_select_gpio(RHEA_LORA_DIO0);
+    gpio_set_pull_mode(RHEA_LORA_DIO0, GPIO_PULLUP_ONLY);
     gpio_set_direction(RHEA_LORA_DIO0, GPIO_MODE_INPUT);
+    
     gpio_pad_select_gpio(RHEA_LORA_DIO1);
+    gpio_set_pull_mode(RHEA_LORA_DIO1, GPIO_PULLUP_ONLY);
     gpio_set_direction(RHEA_LORA_DIO1, GPIO_MODE_INPUT);
+
     gpio_pad_select_gpio(RHEA_LORA_DIO2);
+    gpio_set_pull_mode(RHEA_LORA_DIO2, GPIO_PULLUP_ONLY);
     gpio_set_direction(RHEA_LORA_DIO2, GPIO_MODE_INPUT);
+    
     gpio_pad_select_gpio(RHEA_LORA_DIO3);
+    gpio_set_pull_mode(RHEA_LORA_DIO3, GPIO_PULLUP_ONLY);
     gpio_set_direction(RHEA_LORA_DIO3, GPIO_MODE_INPUT);
+    #endif
 #if 0
     gpio_pad_select_gpio(RHEA_LORA_DIO4);
     gpio_set_direction(RHEA_LORA_DIO4, GPIO_MODE_INPUT);
@@ -118,8 +127,10 @@ void SX1276IoInit( void )
 
 static void IRAM_ATTR rhea_gpio_isr_handler(void* arg)
 {
+    if (g_shake_state != 0) return;
+    g_shake_state = 1;
     uint32_t gpio_num = (uint32_t) arg;
-    //gpio_isr_handler_remove(DIONE_SHAKE_PIN);
+    gpio_isr_handler_remove(RHEA_LORA_DIO0);
     xQueueSendFromISR(g_rhea_gpio_evt_queue, &gpio_num, NULL);
 }
 
@@ -158,6 +169,8 @@ static void rhea_Irq_task(void *pvParameters)
                     
                     break;
             }
+            gpio_isr_handler_add(RHEA_LORA_DIO0, rhea_gpio_isr_handler, (void*) RHEA_LORA_DIO0);
+            g_shake_state = 0;
         }
     }
 }
@@ -182,8 +195,8 @@ void SX1276IoIrqInit( DioIrqHandler **irqHandlers )
     //set as input mode    
     io_conf.mode = GPIO_MODE_INPUT;
     //enable pull-up mode
-    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-    io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
     gpio_config(&io_conf);
     #if 0
     io_conf.pin_bit_mask = 1ULL << RHEA_LORA_DIO1;
@@ -198,7 +211,7 @@ void SX1276IoIrqInit( DioIrqHandler **irqHandlers )
     gpio_config(&io_conf);
     #endif
     //create a queue to handle gpio event from isr
-    g_rhea_gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+    g_rhea_gpio_evt_queue = xQueueCreate(1, sizeof(uint32_t));
     //start gpio task
     xTaskCreate(rhea_Irq_task, "IrqTask", 4096, NULL, 9, NULL);
 
@@ -206,9 +219,11 @@ void SX1276IoIrqInit( DioIrqHandler **irqHandlers )
     gpio_install_isr_service(0);
     //hook isr handler for specific gpio pin
     gpio_isr_handler_add(RHEA_LORA_DIO0, rhea_gpio_isr_handler, (void*) RHEA_LORA_DIO0);
+    #if 0
     gpio_isr_handler_add(RHEA_LORA_DIO1, rhea_gpio_isr_handler, (void*) RHEA_LORA_DIO1);
     gpio_isr_handler_add(RHEA_LORA_DIO2, rhea_gpio_isr_handler, (void*) RHEA_LORA_DIO2);
     gpio_isr_handler_add(RHEA_LORA_DIO3, rhea_gpio_isr_handler, (void*) RHEA_LORA_DIO3);
+    #endif
 #if 0
     gpio_isr_handler_add(RHEA_LORA_DIO4, rhea_gpio_isr_handler, (void*) RHEA_LORA_DIO4);
     gpio_isr_handler_add(RHEA_LORA_DIO5, rhea_gpio_isr_handler, (void*) RHEA_LORA_DIO5);

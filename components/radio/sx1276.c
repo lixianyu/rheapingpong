@@ -372,7 +372,7 @@ static void RxChainCalibration( void )
     while( ( SX1276Read( REG_IMAGECAL ) & RF_IMAGECAL_IMAGECAL_RUNNING ) == RF_IMAGECAL_IMAGECAL_RUNNING )
     {
     }
-
+#if 0
     // Sets a Frequency in HF band
     SX1276SetChannel( 868000000 );
 
@@ -381,7 +381,7 @@ static void RxChainCalibration( void )
     while( ( SX1276Read( REG_IMAGECAL ) & RF_IMAGECAL_IMAGECAL_RUNNING ) == RF_IMAGECAL_IMAGECAL_RUNNING )
     {
     }
-
+#endif
     // Restore context
     SX1276Write( REG_PACONFIG, regPaConfigInitVal );
     SX1276SetChannel( initialFreq );
@@ -1476,7 +1476,7 @@ void SX1276OnTimeoutIrq( TimerHandle_t xTimer )
 void SX1276OnDio0Irq( void )
 {
     volatile uint8_t irqFlags = 0;
-
+    ESP_LOGW(TAG, "Enter %s", __func__);
     switch( SX1276.Settings.State )
     {
         case RF_RX_RUNNING:
