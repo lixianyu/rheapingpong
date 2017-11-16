@@ -607,6 +607,7 @@ static void ping_pong_task(void *pvParameter)
 {
     ESP_LOGW(TAG_RHEA, "Enter %s", __func__);
 
+    static uint8_t slaveRecvTimeOutCount = 0;
     uint32_t rdm;
     uint8_t i;
     States_t State = LOWPOWER;
@@ -700,6 +701,7 @@ static void ping_pong_task(void *pvParameter)
             {
                 if( BufferSize > 0 )
                 {
+                    slaveRecvTimeOutCount = 0;
                     dumpBytes(Buffer, BufferSize);
                     if( strncmp( ( const char* )Buffer, ( const char* )PingMsg, PING_PONG_LEN ) == 0 )
                     {
@@ -746,7 +748,18 @@ static void ping_pong_task(void *pvParameter)
             }
             else
             {
-                Radio.Rx( RX_TIMEOUT_VALUE );
+                slaveRecvTimeOutCount++;
+                if (slaveRecvTimeOutCount > 10)
+                {
+                    slaveRecvTimeOutCount = 0;
+                    rhea_gen_pong_package();
+                    DelayMs( 1 );
+                    Radio.Send( Buffer, PAY_LOAD_LENGTH );
+                }
+                else
+                {
+                    Radio.Rx( RX_TIMEOUT_VALUE );
+                }
             }
             State = LOWPOWER;
             break;

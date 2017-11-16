@@ -13,7 +13,7 @@ extern "C"
 
 #define LED_ON    1
 #define LED_OFF   0
-#if 0
+#if 1
 // The White board
 #define LED_BLUE     GPIO_NUM_25
 #else
