@@ -16,7 +16,11 @@
 extern uint64_t system_get_rtc_time(void);
 static const char *TAG_RHEA = "Rhea_main";
 
+#ifdef PING_PONG_MASTER
+static bool isMaster = true;
+#else
 static bool isMaster = false;
+#endif
 //#define RF_FREQUENCY                                470500000 // Hz
 //#define RF_FREQUENCY                                433000000 // Hz
 //#define RF_FREQUENCY                                433050000 // No work
@@ -423,7 +427,7 @@ static void led_Toggle_task(void *pvParameters)
             gpio_set_level(LED_BLUE, LED_ON);
             if (time == 0)
             {
-                vTaskDelay(100 / portTICK_PERIOD_MS);
+                vTaskDelay(700 / portTICK_PERIOD_MS);
             }
             else if (time == 1)
             {
@@ -435,7 +439,7 @@ static void led_Toggle_task(void *pvParameters)
             }
             else if (time == 2)
             {
-                vTaskDelay(700 / portTICK_PERIOD_MS);
+                vTaskDelay(90 / portTICK_PERIOD_MS);
             }
             else if (time == 3)
             {
@@ -749,12 +753,12 @@ static void ping_pong_task(void *pvParameter)
             else
             {
                 slaveRecvTimeOutCount++;
-                if (slaveRecvTimeOutCount > 10)
+                if (slaveRecvTimeOutCount > 3)
                 {
                     slaveRecvTimeOutCount = 0;
-                    rhea_gen_pong_package();
+                    strcpy((char*)Buffer, "time out");
                     DelayMs( 1 );
-                    Radio.Send( Buffer, PAY_LOAD_LENGTH );
+                    Radio.Send( Buffer, strlen((char*)Buffer) );
                 }
                 else
                 {
@@ -765,6 +769,7 @@ static void ping_pong_task(void *pvParameter)
             break;
         case TX_TIMEOUT:
             timeout_reinit();
+            LedToggle(LED_BLUE, 3);
             Radio.Rx( RX_TIMEOUT_VALUE );
             State = LOWPOWER;
             break;

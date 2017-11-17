@@ -6,6 +6,7 @@ extern "C"
 {
 #endif
 
+//#define PING_PONG_MASTER
 #define USE_MODEM_LORA
 #define RHEA_CLOSE_WIFI
 
@@ -13,12 +14,12 @@ extern "C"
 
 #define LED_ON    1
 #define LED_OFF   0
-#if 1
-// The White board
-#define LED_BLUE     GPIO_NUM_25
-#else
+#ifdef PING_PONG_MASTER
 // The black board
 #define LED_BLUE     GPIO_NUM_2
+#else
+// The White board
+#define LED_BLUE     GPIO_NUM_25
 #endif
 
 // For Lora gpio.
